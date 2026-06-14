@@ -1,66 +1,80 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' https: data: blob:;">
-<title>Weather Wallpaper</title>
-<link rel="stylesheet" href="mapbox-gl.css">
-<link rel="stylesheet" href="styles.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self' 'unsafe-inline' 'unsafe-eval' https: data: blob:;">
+  <title>Weather Wallpaper</title>
+  <link rel="stylesheet" href="mapbox-gl.css">
+  <link rel="stylesheet" href="styles.css">
 </head>
+
 <body>
 
-<div id="globe-map"></div>
+  <div id="globe-map"></div>
 
-<div class="orb orb-1"></div>
-<div class="orb orb-2"></div>
-<div class="orb orb-3"></div>
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
 
-<div class="page">
-  <div class="badge fade-up fade-up-1" id="badge">
-    <span class="live-dot"></span>
-    <span id="city-name">Loading&hellip;</span>
-  </div>
+  <div class="page">
+    <div class="badge fade-up fade-up-1" id="badge">
+      <span class="live-dot"></span>
+      <span id="city-name">Loading&hellip;</span>
+    </div>
 
-  <div class="spacer"></div>
+    <div class="spacer"></div>
 
-  <div class="bottom-area fade-up fade-up-2">
-    <div class="bottom-bar" id="bottom-bar">
-      <div class="bar-view" id="weather-view">
-        <div class="bar-current">
-          <div class="bar-temp-row">
-            <span class="temperature" id="temperature">--<span class="unit">&deg;</span></span>
-            <div class="bar-condition">
-              <span class="condition" id="condition">Loading&hellip;</span>
-              <span class="subtitle" id="subtitle"></span>
+    <div class="bottom-area fade-up fade-up-2">
+      <div class="bottom-bar" id="bottom-bar">
+        <div class="bar-view" id="weather-view">
+          <div class="bar-current">
+            <div class="bar-temp-row">
+              <span class="temperature" id="temperature">--<span class="unit">&deg;</span></span>
+              <div class="bar-condition">
+                <span class="condition" id="condition">Loading&hellip;</span>
+                <span class="subtitle" id="subtitle"></span>
+              </div>
             </div>
+          </div>
+
+          <div class="bar-divider"></div>
+
+          <div class="bar-stats" id="stats"></div>
+
+          <div class="bar-divider"></div>
+
+          <div class="bar-forecast" id="forecast">
+            <span class="bar-loading">Loading&hellip;</span>
           </div>
         </div>
 
-        <div class="bar-divider"></div>
-
-        <div class="bar-stats" id="stats"></div>
-
-        <div class="bar-divider"></div>
-
-        <div class="bar-forecast" id="forecast">
-          <span class="bar-loading">Loading&hellip;</span>
-        </div>
-      </div>
-
-      <div class="bar-view bar-hidden" id="allergy-view">
-        <div class="allergy-content" id="allergy-content">
-          <span class="bar-loading">Loading&hellip;</span>
+        <div class="bar-view bar-hidden" id="allergy-view">
+          <div class="allergy-content" id="allergy-content">
+            <span class="bar-loading">Loading&hellip;</span>
+          </div>
         </div>
       </div>
     </div>
   </div>
-</div>
 
-<div id="flight-card" class="flight-card"></div>
+  <div id="flight-card" class="flight-card"></div>
 
-<script src="mapbox-gl-csp.js"></script>
-<script src="globe.js"></script>
-<script src="weather.js"></script>
+  <button id="view-toggle" onclick="window.location.href='sky.html'" title="Switch to Live Sky">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+      stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="4" />
+      <path
+        d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </svg>
+    Live Sky
+  </button>
+
+  <script src="mapbox-gl-csp.js"></script>
+  <script src="globe.js"></script>
+  <script src="weather.js"></script>
 </body>
+
 </html>

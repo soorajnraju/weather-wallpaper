@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' 'unsafe-inline' 'unsafe-eval' https: data: blob:;">
+    <title>Sky Wallpaper</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="sky.css">
+</head>
+
+<body class="sky-mode">
+
+    <canvas id="sky-canvas"></canvas>
+
+    <div class="page">
+        <div class="badge fade-up fade-up-1" id="sky-badge">
+            <span class="live-dot"></span>
+            <span id="sky-city">Loading&hellip;</span>
+        </div>
+
+        <div class="spacer"></div>
+
+        <div class="bottom-area fade-up fade-up-2">
+            <div class="bottom-bar" id="sky-bottom-bar">
+                <div class="bar-current">
+                    <div class="bar-temp-row">
+                        <span class="temperature" id="sky-temperature">--<span class="unit">&deg;</span></span>
+                        <div class="bar-condition">
+                            <span class="condition" id="sky-condition">Loading&hellip;</span>
+                            <span class="subtitle" id="sky-subtitle"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bar-divider"></div>
+
+                <div class="bar-stats" id="sky-stats"></div>
+
+                <div class="bar-divider"></div>
+
+                <div class="sky-objects-row" id="sky-objects">
+                    <span class="bar-loading">Locating sky objects&hellip;</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <button id="view-toggle" onclick="window.location.href='index.html'" title="Switch to Globe Map">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+            stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="2" y1="12" x2="22" y2="12" />
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+        </svg>
+        Globe Map
+    </button>
+
+    <script src="sky.js"></script>
+</body>
+
+</html>

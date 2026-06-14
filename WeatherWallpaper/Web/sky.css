@@ -1,0 +1,124 @@
+/* ============================================================
+   Sky Wallpaper – supplemental styles (layered on top of styles.css)
+   ============================================================ */
+
+/* Keep bottom bar away from the toggle button */
+body.sky-mode .bottom-area {
+    padding-right: 120px;
+}
+
+/* Full-screen canvas sits behind everything */
+#sky-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 0;
+    display: block;
+}
+
+/* Remove globe / orb elements in sky mode */
+body.sky-mode #globe-map {
+    display: none;
+}
+
+body.sky-mode .orb {
+    display: none;
+}
+
+/* ── Sky objects strip (planets / moon visible tonight) ─────── */
+.sky-objects-row {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    padding: 6px 0;
+}
+
+.sky-object-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.sky-object-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    box-shadow: 0 0 6px currentColor;
+}
+
+.sky-object-name {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-mid);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.sky-object-alt {
+    font-size: 10px;
+    color: var(--text-dim);
+}
+
+/* ── Canvas planet / star label tooltip ────────────────────── */
+.sky-label-overlay {
+    position: fixed;
+    pointer-events: none;
+    z-index: 5;
+    font-family: 'Inter', sans-serif;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.75);
+    letter-spacing: 0.05em;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+    white-space: nowrap;
+}
+
+/* ── Daytime dimming layer (when sun high) ─────────────────── */
+#sky-canvas.daytime-filter {
+    filter: none;
+    /* canvas handles gradient internally */
+}
+
+/* ── Weather overlay badges ──────────────────────────────────  */
+.weather-badge {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 4;
+    background: var(--bar-bg);
+    border: 1px solid var(--bar-border);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-radius: 12px;
+    padding: 8px 14px;
+    font-size: 12px;
+    color: var(--text-mid);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* ── Cloud-cover indicator ────────────────────────────────── */
+.cloud-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.cloud-bar-track {
+    width: 48px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.12);
+    overflow: hidden;
+}
+
+.cloud-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: rgba(200, 210, 230, 0.7);
+    transition: width 1s ease;
+}

@@ -18,6 +18,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var geocodeCache: [String: String] = [:]
     private var openSkyTokenTimer: Timer?
     private var flightFetchTimer: Timer?
+    private var skyViewEnabled: Bool = false
 
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -68,6 +69,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Set Mapbox Token…", action: #selector(setMapboxToken), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Set Pollen API Key…", action: #selector(setPollenApiKey), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Set OpenSky Credentials…", action: #selector(setOpenSkyCredentials), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
+
+        let viewGlobe = NSMenuItem(title: "View: Globe Map", action: #selector(switchToGlobeView(_:)), keyEquivalent: "")
+        viewGlobe.state = .on
+        menu.addItem(viewGlobe)
+        let viewSky = NSMenuItem(title: "View: Live Sky", action: #selector(switchToSkyView(_:)), keyEquivalent: "")
+        viewSky.state = .off
+        menu.addItem(viewSky)
         menu.addItem(NSMenuItem.separator())
 
         let zoomGlobe = NSMenuItem(title: "Zoom: Globe", action: #selector(setZoomGlobe(_:)), keyEquivalent: "")
@@ -443,6 +452,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         spinEnabled.toggle()
         sender.state = spinEnabled ? .on : .off
         desktopManager.injectSpinToggle(spinEnabled)
+    }
+
+    // MARK: - View mode
+
+    @objc private func switchToGlobeView(_ sender: NSMenuItem) {
+        guard skyViewEnabled else { return }
+        skyViewEnabled = false
+        desktopManager.switchToGlobeView()
+        updateViewCheckmarks()
+    }
+
+    @objc private func switchToSkyView(_ sender: NSMenuItem) {
+        guard !skyViewEnabled else { return }
+        skyViewEnabled = true
+        desktopManager.switchToSkyView()
+        updateViewCheckmarks()
+    }
+
+    private func updateViewCheckmarks() {
+        guard let menu = statusItem.menu else { return }
+        for item in menu.items {
+            switch item.title {
+            case "View: Globe Map": item.state = skyViewEnabled ? .off : .on
+            case "View: Live Sky":  item.state = skyViewEnabled ? .on  : .off
+            default: break
+            }
+        }
     }
 
     @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {

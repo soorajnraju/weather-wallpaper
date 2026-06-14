@@ -12,6 +12,7 @@ class DesktopWindowManager: NSObject, WKScriptMessageHandler {
     private var pendingPollenKey: String?
     private var pendingUnitSystem: String?
     private let processPool = WKProcessPool()
+    private(set) var currentViewMode: String = "globe"
 
     func setupWindows() {
         createWindowsForAllScreens()
@@ -161,8 +162,33 @@ class DesktopWindowManager: NSObject, WKScriptMessageHandler {
     private func loadContent(in webView: WKWebView) {
         guard let resourceURL = Bundle.main.resourceURL else { return }
         let webDir = resourceURL.appendingPathComponent("Web")
-        let indexURL = webDir.appendingPathComponent("index.html")
+        let page = currentViewMode == "sky" ? "sky.html" : "index.html"
+        let indexURL = webDir.appendingPathComponent(page)
         webView.loadFileURL(indexURL, allowingReadAccessTo: webDir)
+    }
+
+    // MARK: - View mode switching
+
+    func switchToSkyView() {
+        guard currentViewMode != "sky" else { return }
+        currentViewMode = "sky"
+        reloadAllViews()
+    }
+
+    func switchToGlobeView() {
+        guard currentViewMode != "globe" else { return }
+        currentViewMode = "globe"
+        reloadAllViews()
+    }
+
+    private func reloadAllViews() {
+        guard let resourceURL = Bundle.main.resourceURL else { return }
+        let webDir = resourceURL.appendingPathComponent("Web")
+        let page = currentViewMode == "sky" ? "sky.html" : "index.html"
+        let url = webDir.appendingPathComponent(page)
+        for (_, webView) in windows {
+            webView.loadFileURL(url, allowingReadAccessTo: webDir)
+        }
     }
 
     // MARK: - WKScriptMessageHandler (data relay from primary → all)
