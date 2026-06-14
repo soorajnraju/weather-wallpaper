@@ -21,6 +21,7 @@ Built with MapboxGL, Swift, and WebKit. Entirely vibe-coded with Claude.
 
 - macOS 13.0+
 - A free [Mapbox access token](https://account.mapbox.com/access-tokens/) (required)
+- An [OpenSky Network](https://opensky-network.org/) account with an OAuth2 API client (required for live flights)
 - A [Google Pollen API key](https://console.cloud.google.com/) (optional, for pollen data)
 
 ## Install
@@ -44,6 +45,7 @@ Requires Xcode Command Line Tools (`xcode-select --install`).
 1. Launch the app — a globe icon appears in your menu bar
 2. Click the icon → **Set Mapbox Token…** → paste your `pk.eyJ…` token
 3. The globe renders on your desktop
+4. To enable live flights: create a free account at [opensky-network.org](https://opensky-network.org), go to **My OpenSky → Account**, create an API client, then click **Set OpenSky Credentials…** in the menu and paste your `client_id` and `client_secret`
 
 ## Menu Bar
 
@@ -53,6 +55,7 @@ Requires Xcode Command Line Tools (`xcode-select --install`).
 | Search Location… | Geocode a city/place and fly there |
 | Set Mapbox Token… | Enter your Mapbox public token |
 | Set Pollen API Key… | Enter your Google Pollen API key |
+| Set OpenSky Credentials… | Enter your OpenSky OAuth2 client ID and secret |
 | Zoom: Globe / Country / City / Street | Change zoom level (radio select) |
 | Show Flights | Toggle live flight tracking |
 | Show Weather Radar | Toggle precipitation overlay |
@@ -64,7 +67,7 @@ Requires Xcode Command Line Tools (`xcode-select --install`).
 ## APIs Used
 
 - [Mapbox GL JS](https://www.mapbox.com/) — 3D globe rendering
-- [OpenSky Network](https://opensky-network.org/) — live flight data
+- [OpenSky Network](https://opensky-network.org/) — live flight data (fetched via Swift `URLSession` to avoid WKWebView CORS restrictions; requires OAuth2 credentials)
 - [RainViewer](https://www.rainviewer.com/api.html) — weather radar tiles (free, no key)
 - [Open-Meteo](https://open-meteo.com/) — air quality data (free, no key)
 - [Google Pollen API](https://developers.google.com/maps/documentation/pollen) — pollen forecasts
