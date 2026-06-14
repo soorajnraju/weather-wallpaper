@@ -16,6 +16,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var currentUnitSystem: String = "imperial"
     private let geocoder = CLGeocoder()
     private var geocodeCache: [String: String] = [:]
+    private var openSkyTokenTimer: Timer?
+    private var flightFetchTimer: Timer?
+
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let savedUnit = UserDefaults.standard.string(forKey: "unit-system"), ["imperial", "metric"].contains(savedUnit) {
@@ -64,6 +67,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Search Location…", action: #selector(searchLocation), keyEquivalent: "l"))
         menu.addItem(NSMenuItem(title: "Set Mapbox Token…", action: #selector(setMapboxToken), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Set Pollen API Key…", action: #selector(setPollenApiKey), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Set OpenSky Credentials…", action: #selector(setOpenSkyCredentials), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
 
         let zoomGlobe = NSMenuItem(title: "Zoom: Globe", action: #selector(setZoomGlobe(_:)), keyEquivalent: "")
@@ -213,6 +217,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func setOpenSkyCredentials() {
+        let alert = NSAlert()
+        alert.messageText = "OpenSky Network Credentials"
+        alert.informativeText = "Enter your OpenSky OAuth2 client credentials.\nCreate them at opensky-network.org → My OpenSky → Account."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 360, height: 56))
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        let clientIdField = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        clientIdField.placeholderString = "Client ID"
+        clientIdField.stringValue = UserDefaults.standard.string(forKey: "opensky-client-id") ?? ""
+
+        let clientSecretField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        clientSecretField.placeholderString = "Client Secret"
+        clientSecretField.stringValue = UserDefaults.standard.string(forKey: "opensky-client-secret") ?? ""
+
+        stack.addArrangedSubview(clientIdField)
+        stack.addArrangedSubview(clientSecretField)
+        alert.accessoryView = stack
+
+        NSApp.activate(ignoringOtherApps: true)
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            let clientId = clientIdField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let clientSecret = clientSecretField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !clientId.isEmpty && !clientSecret.isEmpty {
+                UserDefaults.standard.set(clientId, forKey: "opensky-client-id")
+                UserDefaults.standard.set(clientSecret, forKey: "opensky-client-secret")
+                desktopManager.injectOpenSkyCredentials(clientId: clientId, clientSecret: clientSecret)
+                // Immediately fetch a fresh token now that we have credentials
+                fetchAndInjectOpenSkyToken()
+            }
+        }
+    }
+
     // MARK: - Zoom
 
     private func updateZoomCheckmarks() {
@@ -286,7 +330,95 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleFlights(_ sender: NSMenuItem) {
         flightsEnabled.toggle()
         sender.state = flightsEnabled ? .on : .off
-        desktopManager.injectFlightsToggle(flightsEnabled)
+        if flightsEnabled {
+            fetchAndInjectOpenSkyToken { [weak self] in
+                self?.desktopManager.injectFlightsToggle(true)
+                self?.startFlightFetchTimer()
+            }
+        } else {
+            flightFetchTimer?.invalidate()
+            flightFetchTimer = nil
+            desktopManager.injectFlightsToggle(false)
+        }
+    }
+
+    private func startFlightFetchTimer() {
+        flightFetchTimer?.invalidate()
+        fetchFlightsNative() // immediate first fetch
+        flightFetchTimer = Timer.scheduledTimer(withTimeInterval: 120, repeats: true) { [weak self] _ in
+            self?.fetchFlightsNative()
+        }
+    }
+
+    private func fetchFlightsNative() {
+        guard flightsEnabled else { return }
+        var urlComponents = URLComponents(string: "https://opensky-network.org/api/states/all")!
+        urlComponents.queryItems = [
+            URLQueryItem(name: "lamin", value: "-90"),
+            URLQueryItem(name: "lomin", value: "-180"),
+            URLQueryItem(name: "lamax", value: "90"),
+            URLQueryItem(name: "lomax", value: "180")
+        ]
+        guard let url = urlComponents.url else { return }
+        var request = URLRequest(url: url)
+        if let token = UserDefaults.standard.string(forKey: "opensky-bearer-token"), !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self = self, self.flightsEnabled else { return }
+                if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 429 {
+                    NSLog("[Flights] Rate limited by OpenSky")
+                    return
+                }
+                guard let data = data, error == nil,
+                      let jsonStr = String(data: data, encoding: .utf8) else {
+                    NSLog("[Flights] Fetch error: %@", error?.localizedDescription ?? "no data")
+                    return
+                }
+                self.desktopManager.injectRawFlightData(jsonStr)
+            }
+        }.resume()
+    }
+
+    private func fetchAndInjectOpenSkyToken(completion: (() -> Void)? = nil) {
+        guard let clientId = UserDefaults.standard.string(forKey: "opensky-client-id"), !clientId.isEmpty,
+              let clientSecret = UserDefaults.standard.string(forKey: "opensky-client-secret"), !clientSecret.isEmpty else {
+            // No credentials — proceed without a token (anonymous, may hit rate limits)
+            completion?()
+            return
+        }
+
+        let tokenURL = URL(string: "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token")!
+        var request = URLRequest(url: tokenURL)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        let body = "grant_type=client_credentials&client_id=\(clientId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")&client_secret=\(clientSecret.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"
+        request.httpBody = body.data(using: .utf8)
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard let data = data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let token = json["access_token"] as? String else {
+                    NSLog("[Flights] OpenSky token fetch failed: %@", error?.localizedDescription ?? "unknown")
+                    completion?()
+                    return
+                }
+                let expiresIn = (json["expires_in"] as? Double ?? 1800) - 60
+                self.desktopManager.injectOpenSkyToken(token)
+                // Store token so fetchFlightsNative can use it
+                UserDefaults.standard.set(token, forKey: "opensky-bearer-token")
+                // Schedule proactive refresh
+                self.openSkyTokenTimer?.invalidate()
+                self.openSkyTokenTimer = Timer.scheduledTimer(withTimeInterval: expiresIn, repeats: false) { [weak self] _ in
+                    guard let self = self, self.flightsEnabled else { return }
+                    self.fetchAndInjectOpenSkyToken()
+                }
+                completion?()
+            }
+        }.resume()
     }
 
     @objc private func toggleWeather(_ sender: NSMenuItem) {

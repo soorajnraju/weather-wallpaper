@@ -31,6 +31,10 @@ class DesktopWindowManager: NSObject, WKScriptMessageHandler {
         if let key = UserDefaults.standard.string(forKey: "google-pollen-api-key"), !key.isEmpty {
             injectPollenApiKey(key)
         }
+        if let clientId = UserDefaults.standard.string(forKey: "opensky-client-id"), !clientId.isEmpty,
+           let clientSecret = UserDefaults.standard.string(forKey: "opensky-client-secret"), !clientSecret.isEmpty {
+            injectOpenSkyCredentials(clientId: clientId, clientSecret: clientSecret)
+        }
         if let unit = pendingUnitSystem ?? UserDefaults.standard.string(forKey: "unit-system") {
             injectUnitSystem(unit)
         }
@@ -108,6 +112,17 @@ class DesktopWindowManager: NSObject, WKScriptMessageHandler {
         if let key = UserDefaults.standard.string(forKey: "google-pollen-api-key"), !key.isEmpty {
             let script = WKUserScript(
                 source: "localStorage.setItem('google-pollen-api-key', \(quoteJS(key)));",
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+            config.userContentController.addUserScript(script)
+        }
+
+        // Inject OpenSky credentials before page load
+        if let clientId = UserDefaults.standard.string(forKey: "opensky-client-id"), !clientId.isEmpty,
+           let clientSecret = UserDefaults.standard.string(forKey: "opensky-client-secret"), !clientSecret.isEmpty {
+            let script = WKUserScript(
+                source: "localStorage.setItem('opensky-client-id', \(quoteJS(clientId))); localStorage.setItem('opensky-client-secret', \(quoteJS(clientSecret)));",
                 injectionTime: .atDocumentStart,
                 forMainFrameOnly: true
             )
@@ -224,6 +239,30 @@ class DesktopWindowManager: NSObject, WKScriptMessageHandler {
 
     func injectZoom(_ level: Double) {
         let js = "if (window.mapFlyTo) window.mapFlyTo(\(level));"
+        evaluateOnAll(js)
+    }
+
+    func injectOpenSkyCredentials(clientId: String, clientSecret: String) {
+        let js = "if (window.setOpenSkyCredentials) window.setOpenSkyCredentials(\(quoteJS(clientId)), \(quoteJS(clientSecret)));"
+        evaluateOnAll(js)
+    }
+
+    func injectOpenSkyToken(_ token: String) {
+        let js = "if (window.setOpenSkyToken) window.setOpenSkyToken(\(quoteJS(token)));"
+        evaluateOnAll(js)
+    }
+
+    func injectRawFlightData(_ json: String) {
+        // Escape the JSON string safely for inline JS — use a data attribute trick to avoid injection
+        guard let encoded = json.data(using: .utf8)?.base64EncodedString() else { return }
+        let js = """
+        (function(){
+          try {
+            var raw = atob(\(quoteJS(encoded)));
+            if (window.receiveFlightsFromSwift) window.receiveFlightsFromSwift(raw);
+          } catch(e) {}
+        })();
+        """
         evaluateOnAll(js)
     }
 

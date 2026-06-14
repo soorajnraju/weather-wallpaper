@@ -201,8 +201,7 @@
 
     function runBackgroundTasks() {
       if (appPaused) return;
-      if (flightsEnabled) fetchFlights();
-
+      // Flights are fetched by Swift (URLSession) to avoid CORS restrictions.
       // Update night overlays
       var tw = map.getSource('twilight-overlay');
       var nt = map.getSource('night-overlay');
@@ -240,6 +239,13 @@
           // We keep bgTasksInterval running for night overlays even if flights are off
         }
       }
+    };
+
+    window.setOpenSkyCredentials = function (clientId, clientSecret) {
+      localStorage.setItem(OPENSKY_CLIENT_ID_KEY, clientId);
+      localStorage.setItem(OPENSKY_CLIENT_SECRET_KEY, clientSecret);
+      // Token is fetched by Swift (URLSession) and injected via setOpenSkyToken
+      openskyBearerToken = null;
     };
 
     // --- Flight state ---
@@ -414,6 +420,23 @@
       map.setLayoutProperty('flights-layer', 'visibility', 'none');
     });
 
+    // --- OpenSky token (injected by Swift via URLSession to avoid CORS) ---
+    var OPENSKY_CLIENT_ID_KEY = 'opensky-client-id';
+    var OPENSKY_CLIENT_SECRET_KEY = 'opensky-client-secret';
+    var openskyBearerToken = null;
+
+    function getOpenSkyClientId() { return localStorage.getItem(OPENSKY_CLIENT_ID_KEY) || ''; }
+    function getOpenSkyClientSecret() { return localStorage.getItem(OPENSKY_CLIENT_SECRET_KEY) || ''; }
+
+    // Called by Swift after it fetches an OAuth2 token via URLSession (no CORS restriction there)
+    window.setOpenSkyToken = function (token) {
+      openskyBearerToken = token || null;
+    };
+
+    function getOpenSkyHeaders() {
+      return openskyBearerToken ? { Authorization: 'Bearer ' + openskyBearerToken } : {};
+    }
+
     // --- Flight fetching (primary view only) ---
     function fetchFlights() {
       if (!mapLoaded || appPaused) return;
@@ -424,7 +447,7 @@
         '&lomin=' + bounds.getWest().toFixed(2) +
         '&lamax=' + bounds.getNorth().toFixed(2) +
         '&lomax=' + bounds.getEast().toFixed(2);
-      fetch(url)
+      fetch(url, { headers: getOpenSkyHeaders() })
         .then(function (res) {
           if (res.status === 429) { console.warn('[Flights] Rate limited, backing off'); return null; }
           if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -459,9 +482,33 @@
         .catch(function (err) { console.warn('[Flights]', err.message || err); });
     }
 
-    // Receiver for flight data relayed from primary view
+    // Called by Swift with the raw JSON string from OpenSky API (all views)
+    window.receiveFlightsFromSwift = function (jsonStr) {
+      if (!mapLoaded || !flightsEnabled) return;
+      var data;
+      try { data = JSON.parse(jsonStr); } catch (e) { return; }
+      if (!data || !Array.isArray(data.states)) return;
+      var newStore = [];
+      for (var i = 0; i < data.states.length && newStore.length < FLIGHTS_MAX; i++) {
+        var s = data.states[i];
+        var lon = s[5], lat = s[6], onGround = s[8];
+        if (onGround || lon == null || lat == null) continue;
+        newStore.push({
+          lon: lon, lat: lat,
+          velocity: s[9] || 0, heading: s[10] || 0,
+          callsign: (s[1] || '').trim(), origin_country: s[2] || '',
+          altitude: s[13] != null ? s[13] : (s[7] || 0),
+          vertical_rate: s[11] || 0
+        });
+      }
+      flightStore = newStore;
+      lastFlightFetch = Date.now();
+      renderFlightPositions();
+    };
+
+    // Receiver for flight data relayed from primary view (kept for secondary screen relay)
     window.receiveFlights = function (data) {
-      if (window.isPrimaryView) return; // primary already has this data
+      if (window.isPrimaryView) return;
       flightStore = data.store || [];
       lastFlightFetch = data.timestamp || Date.now();
       renderFlightPositions();
