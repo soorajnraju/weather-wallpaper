@@ -46,7 +46,7 @@ function detectDefaultUnitSystem() {
     var locale = Intl.DateTimeFormat().resolvedOptions().locale || '';
     var region = locale.split('-').pop().toUpperCase();
     if (region === 'US' || region === 'LR' || region === 'MM') return 'imperial';
-  } catch (e) {}
+  } catch (e) { }
   return 'metric';
 }
 
@@ -176,6 +176,57 @@ function updateClock() {
   updateSunDot();
 }
 
+function metSymbolToWmo(symbol) {
+  if (!symbol) return 0;
+  var s = String(symbol).replace(/_(day|night|polartwilight)$/i, '');
+  if (s === 'clearsky') return 0;
+  if (s === 'fair') return 1;
+  if (s === 'partlycloudy') return 2;
+  if (s === 'cloudy') return 3;
+  if (s === 'fog') return 45;
+  if (s.indexOf('freezingdrizzle') >= 0) return 56;
+  if (s.indexOf('drizzle') >= 0) return 53;
+  if (s.indexOf('freezingrain') >= 0) return 66;
+  if (s.indexOf('rainshowers') >= 0) return 81;
+  if (s.indexOf('rain') >= 0) return 63;
+  if (s.indexOf('snowshowers') >= 0) return 85;
+  if (s.indexOf('snow') >= 0) return 73;
+  if (s.indexOf('sleet') >= 0) return 67;
+  if (s.indexOf('thunder') >= 0) return 95;
+  return 3;
+}
+
+function cToF(c) { return c == null ? null : (c * 9 / 5 + 32); }
+function msToMph(ms) { return ms == null ? null : (ms * 2.236936); }
+
+async function fetchMetCurrent(loc, unitSystem) {
+  var url = 'https://api.met.no/weatherapi/locationforecast/2.0/compact' +
+    '?lat=' + encodeURIComponent(loc.lat) +
+    '&lon=' + encodeURIComponent(loc.lon);
+  var res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error('met.no request failed: ' + res.status);
+  var data = await res.json();
+  var ts = data && data.properties && data.properties.timeseries
+    ? data.properties.timeseries[0] : null;
+  if (!ts || !ts.data || !ts.data.instant || !ts.data.instant.details) {
+    throw new Error('met.no payload invalid');
+  }
+  var d = ts.data.instant.details;
+  var n1 = ts.data.next_1_hours || null;
+  var tempC = d.air_temperature;
+  var windMs = d.wind_speed;
+
+  return {
+    temperature: unitSystem === 'metric' ? tempC : cToF(tempC),
+    humidity: d.relative_humidity,
+    weatherCode: metSymbolToWmo(n1 && n1.summary ? n1.summary.symbol_code : null),
+    windSpeed: unitSystem === 'metric' ? (windMs == null ? null : windMs * 3.6) : msToMph(windMs),
+    windDirection: d.wind_from_direction,
+    pressure: d.air_pressure_at_sea_level,
+    dewpoint: null,
+  };
+}
+
 // --- Sun arc ---
 function buildSunArc(sunrise, sunset) {
   var riseStr = formatSunTime(sunrise);
@@ -267,6 +318,9 @@ function render(data) {
     { label: 'Humidity', value: current.humidity != null ? Math.round(current.humidity) + '%' : '--' },
     { label: 'Wind', value: current.windSpeed != null ? Math.round(current.windSpeed) + ' ' + windUnit : '--' },
   ];
+  if (data.dataSource) {
+    stats.push({ label: 'Source', value: data.dataSource });
+  }
 
   var statsHtml = stats.map(function (s) {
     return '<div class="stat-item"><span class="stat-label">' + s.label + '</span><span class="stat-value">' + s.value + '</span></div>';
@@ -309,23 +363,40 @@ async function fetchWeather(loc) {
     '&timezone=auto' +
     '&forecast_days=7';
 
+  var metCurrent = null;
+  try {
+    metCurrent = await fetchMetCurrent(loc, unitSystem);
+  } catch (e) { }
+
   var res = await fetch(url);
   var data = await res.json();
+  var openCurrent = data.current || {};
+
+  var mergedCurrent = {
+    temperature: metCurrent && metCurrent.temperature != null ? metCurrent.temperature : openCurrent.temperature_2m,
+    humidity: metCurrent && metCurrent.humidity != null ? metCurrent.humidity : openCurrent.relative_humidity_2m,
+    weatherCode: metCurrent && metCurrent.weatherCode != null ? metCurrent.weatherCode : openCurrent.weather_code,
+    windSpeed: metCurrent && metCurrent.windSpeed != null ? metCurrent.windSpeed : openCurrent.wind_speed_10m,
+    windDirection: metCurrent && metCurrent.windDirection != null ? metCurrent.windDirection : openCurrent.wind_direction_10m,
+    pressure: metCurrent && metCurrent.pressure != null ? metCurrent.pressure : openCurrent.surface_pressure,
+    dewpoint: openCurrent.dew_point_2m,
+  };
 
   var result = {
     location: loc,
     unitSystem: unitSystem,
+    dataSource: metCurrent ? 'MET Norway' : 'Open-Meteo',
     timezone: data.timezone,
     sunrise: data.daily.sunrise ? data.daily.sunrise[0] : null,
     sunset: data.daily.sunset ? data.daily.sunset[0] : null,
     current: {
-      temperature: data.current.temperature_2m,
-      humidity: data.current.relative_humidity_2m,
-      weatherCode: data.current.weather_code,
-      windSpeed: data.current.wind_speed_10m,
-      windDirection: data.current.wind_direction_10m,
-      pressure: data.current.surface_pressure,
-      dewpoint: data.current.dew_point_2m,
+      temperature: mergedCurrent.temperature,
+      humidity: mergedCurrent.humidity,
+      weatherCode: mergedCurrent.weatherCode,
+      windSpeed: mergedCurrent.windSpeed,
+      windDirection: mergedCurrent.windDirection,
+      pressure: mergedCurrent.pressure,
+      dewpoint: mergedCurrent.dewpoint,
     },
     daily: data.daily.time.map(function (date, i) {
       return {
@@ -488,13 +559,13 @@ window.receiveAllergy = function (data) {
 
 window.reloadAllergy = loadAllergyData;
 
-window.setUnitSystem = function(unitSystem) {
+window.setUnitSystem = function (unitSystem) {
   var normalized = setStoredUnitSystem(unitSystem);
   var loc = getLocation();
 
   fetchWeather(loc)
     .then(render)
-    .catch(function(err) {
+    .catch(function (err) {
       console.error('Weather fetch failed:', err);
     });
 

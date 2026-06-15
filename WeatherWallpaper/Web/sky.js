@@ -1225,7 +1225,7 @@ var WeatherFX = (function () {
 })();
 
 // ─────────────────────────────────────────────
-// 8. WEATHER FETCH – Open-Meteo
+// 8. WEATHER FETCH – MET Norway + Open-Meteo fallback
 // ─────────────────────────────────────────────
 var SkyWeather = (function () {
     var CACHE_KEY = 'sky-weather-cache';
@@ -1235,6 +1235,7 @@ var SkyWeather = (function () {
     var state = {
         cloudCover: 0,
         weatherCode: 0,
+        dataSource: 'Open-Meteo',
         temperature: null,
         humidity: null,
         windSpeed: null,
@@ -1255,6 +1256,58 @@ var SkyWeather = (function () {
         return s === 'metric' ? 'metric' : 'imperial';
     }
 
+    function metSymbolToWmo(symbol) {
+        if (!symbol) return 0;
+        var s = String(symbol).replace(/_(day|night|polartwilight)$/i, '');
+        if (s === 'clearsky') return 0;
+        if (s === 'fair') return 1;
+        if (s === 'partlycloudy') return 2;
+        if (s === 'cloudy') return 3;
+        if (s === 'fog') return 45;
+        if (s.indexOf('freezingdrizzle') >= 0) return 56;
+        if (s.indexOf('drizzle') >= 0) return 53;
+        if (s.indexOf('freezingrain') >= 0) return 66;
+        if (s.indexOf('rainshowers') >= 0) return 81;
+        if (s.indexOf('rain') >= 0) return 63;
+        if (s.indexOf('snowshowers') >= 0) return 85;
+        if (s.indexOf('snow') >= 0) return 73;
+        if (s.indexOf('sleet') >= 0) return 67;
+        if (s.indexOf('thunder') >= 0) return 95;
+        return 3;
+    }
+
+    function cToF(c) { return c == null ? null : (c * 9 / 5 + 32); }
+    function msToMph(ms) { return ms == null ? null : (ms * 2.236936); }
+
+    async function fetchMetCurrent(loc, unit) {
+        var url = 'https://api.met.no/weatherapi/locationforecast/2.0/compact' +
+            '?lat=' + encodeURIComponent(loc.lat) +
+            '&lon=' + encodeURIComponent(loc.lon);
+        var res = await window.fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error('met.no request failed: ' + res.status);
+        var data = await res.json();
+        var ts = data && data.properties && data.properties.timeseries
+            ? data.properties.timeseries[0] : null;
+        if (!ts || !ts.data || !ts.data.instant || !ts.data.instant.details) {
+            throw new Error('met.no payload invalid');
+        }
+        var d = ts.data.instant.details;
+        var n1 = ts.data.next_1_hours || null;
+        var temp = d.air_temperature;
+        var wind = d.wind_speed;
+        return {
+            cloudCover: d.cloud_area_fraction,
+            weatherCode: metSymbolToWmo(n1 && n1.summary ? n1.summary.symbol_code : null),
+            temperature: unit === 'metric' ? temp : cToF(temp),
+            humidity: d.relative_humidity,
+            windSpeed: unit === 'metric' ? (wind == null ? null : wind * 3.6) : msToMph(wind),
+            windDir: d.wind_from_direction,
+            visibility: null,
+            precipitation: n1 && n1.details ? (n1.details.precipitation_amount || 0) : 0,
+            precipProb: null
+        };
+    }
+
     async function fetch(loc) {
         if (appPaused || window.isPrimaryView === false) return;
         var unit = getUnitSystem();
@@ -1271,19 +1324,36 @@ var SkyWeather = (function () {
             '&wind_speed_unit=' + windUnit +
             '&timezone=auto&forecast_days=1';
         try {
+            var metCurrent = null;
+            try {
+                metCurrent = await fetchMetCurrent(loc, unit);
+            } catch (e) { }
+
             var res = await window.fetch(url);
             var data = await res.json();
-            var cur = data.current;
-            state.cloudCover = cur.cloud_cover || 0;
-            state.weatherCode = cur.weather_code || 0;
-            state.temperature = cur.temperature_2m;
-            state.humidity = cur.relative_humidity_2m;
-            state.windSpeed = cur.wind_speed_10m;
-            state.windDir = cur.wind_direction_10m;
-            state.visibility = cur.visibility;
-            state.precipitation = cur.precipitation || 0;
-            state.precipProb = data.hourly && data.hourly.precipitation_probability
-                ? (data.hourly.precipitation_probability[0] || 0) : 0;
+            var cur = data.current || {};
+
+            state.cloudCover = metCurrent && metCurrent.cloudCover != null
+                ? metCurrent.cloudCover : (cur.cloud_cover || 0);
+            state.weatherCode = metCurrent && metCurrent.weatherCode != null
+                ? metCurrent.weatherCode : (cur.weather_code || 0);
+            state.dataSource = metCurrent ? 'MET Norway' : 'Open-Meteo';
+            state.temperature = metCurrent && metCurrent.temperature != null
+                ? metCurrent.temperature : cur.temperature_2m;
+            state.humidity = metCurrent && metCurrent.humidity != null
+                ? metCurrent.humidity : cur.relative_humidity_2m;
+            state.windSpeed = metCurrent && metCurrent.windSpeed != null
+                ? metCurrent.windSpeed : cur.wind_speed_10m;
+            state.windDir = metCurrent && metCurrent.windDir != null
+                ? metCurrent.windDir : cur.wind_direction_10m;
+            state.visibility = metCurrent && metCurrent.visibility != null
+                ? metCurrent.visibility : cur.visibility;
+            state.precipitation = metCurrent && metCurrent.precipitation != null
+                ? metCurrent.precipitation : (cur.precipitation || 0);
+            state.precipProb = metCurrent && metCurrent.precipProb != null
+                ? metCurrent.precipProb
+                : (data.hourly && data.hourly.precipitation_probability
+                    ? (data.hourly.precipitation_probability[0] || 0) : 0);
             state.sunrise = data.daily && data.daily.sunrise ? data.daily.sunrise[0] : null;
             state.sunset = data.daily && data.daily.sunset ? data.daily.sunset[0] : null;
             state.timezone = data.timezone || null;
@@ -1370,6 +1440,7 @@ function updateUI() {
         if (s.humidity != null) items.push({ l: 'Humidity', v: Math.round(s.humidity) + '%' });
         if (s.windSpeed != null) items.push({ l: 'Wind', v: Math.round(s.windSpeed) + ' ' + wu });
         if (s.cloudCover != null) items.push({ l: 'Cloud', v: Math.round(s.cloudCover) + '%' });
+        if (s.dataSource) items.push({ l: 'Source', v: s.dataSource });
         statsEl.innerHTML = items.map(function (x) {
             return '<div class="stat-item"><span class="stat-label">' + x.l + '</span>'
                 + '<span class="stat-value">' + x.v + '</span></div>';
