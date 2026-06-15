@@ -585,7 +585,7 @@ var SkyRenderer = (function () {
     function drawStars(jd, lat, lon, sunAlt, cloudCover, time) {
         var baseVisibility = Math.max(0, Math.min(1, (-sunAlt - 5) / 15));
         if (baseVisibility < 0.01) return;
-        var cloudFade = 1 - cloudCover * 0.011;
+        var cloudFade = 1 - cloudCover * 0.009;
 
         for (var i = 0; i < stars.length; i++) {
             var s = stars[i];
@@ -596,44 +596,79 @@ var SkyRenderer = (function () {
             var p = project(pos.alt, pos.az);
             if (p.x < -10 || p.x > W + 10 || p.y < -10 || p.y > H + 10) continue;
 
-            // Atmospheric extinction: dimmer near horizon
-            var airmass = pos.alt > 5 ? 1 / Math.sin(pos.alt * Astro.D2R) : 20;
-            var extinction = Math.min(1, airmass * 0.08);
+            // Atmospheric extinction – stronger near horizon
+            var altR = Math.max(0.01, pos.alt) * Astro.D2R;
+            var airmass = 1 / (Math.sin(altR) + 0.025 * Math.exp(-11 * Math.sin(altR)));
+            var extinction = Math.min(0.95, airmass * 0.06);
 
-            // Magnitude → visual size & brightness
-            var normBright = Math.pow(10, (0 - s.mag) / 2.5);  // normalised flux
-            normBright = Math.max(0.01, normBright * baseVisibility * cloudFade);
-            normBright *= (1 - extinction * 0.5);
+            // Flux → size
+            var flux = Math.pow(10, (0 - s.mag) / 2.5);
+            var vis = Math.max(0, flux * baseVisibility * cloudFade * (1 - extinction * 0.7));
 
-            var size = 0.5 + 1.8 * Math.pow(10, (2 - Math.max(s.mag, -1.5)) / 4);
-            size = Math.min(size, 3.5);
+            var size = Math.min(3.8, 0.4 + 2.2 * Math.pow(10, (1.8 - Math.max(s.mag, -1.5)) / 4));
 
-            // Scintillation (twinkling)
-            var twinkle = 1;
-            if (pos.alt < 30 && s.mag > 1) {
-                twinkle = 0.75 + 0.25 * Math.sin(time * 3.5 + s.ra * 0.1 + pos.az);
+            // Chromatic scintillation: separate R/G/B flicker for low-altitude stars
+            var scint = 0;
+            if (pos.alt < 35 && s.mag > -0.5) {
+                var sc = Math.max(0, (35 - pos.alt) / 35) * (0.18 + airmass * 0.04);
+                scint = sc * Math.sin(time * 4.7 + s.ra * 0.13 + s.dec * 0.07);
             }
-            var alpha = Math.min(0.98, normBright * twinkle * 1.4);
+            var alpha = Math.min(0.98, vis * (1 + scint) * 1.5);
+            if (alpha < 0.015) continue;
 
             var color = StarCatalog.bvToColor(s.bv);
 
-            // Glow for bright stars
-            if (s.mag < 1.5) {
-                var glowR = size * (3.5 - s.mag * 0.5);
-                var gGrad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowR);
-                gGrad.addColorStop(0, color.replace(')', ',' + (alpha * 0.5) + ')').replace('rgb', 'rgba'));
-                gGrad.addColorStop(1, color.replace(')', ',0)').replace('rgb', 'rgba'));
-                ctx.fillStyle = gGrad;
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, glowR, 0, Math.PI * 2);
-                ctx.fill();
+            // Very bright stars: multi-layer glow + 4-point diffraction spike
+            if (s.mag < 0.5) {
+                // Wide soft corona
+                var coronaR = size * 8;
+                var cg = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, coronaR);
+                cg.addColorStop(0, hexAlpha(color, alpha * 0.3));
+                cg.addColorStop(0.4, hexAlpha(color, alpha * 0.08));
+                cg.addColorStop(1, hexAlpha(color, 0));
+                ctx.fillStyle = cg;
+                ctx.beginPath(); ctx.arc(p.x, p.y, coronaR, 0, Math.PI * 2); ctx.fill();
+                // Diffraction spikes
+                ctx.save();
+                ctx.globalAlpha = alpha * 0.35;
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 0.8;
+                var spikeLen = size * 14;
+                for (var sp = 0; sp < 4; sp++) {
+                    var ang = sp * Math.PI / 2;
+                    ctx.beginPath();
+                    ctx.moveTo(p.x + Math.cos(ang) * size, p.y + Math.sin(ang) * size);
+                    ctx.lineTo(p.x + Math.cos(ang) * spikeLen, p.y + Math.sin(ang) * spikeLen);
+                    ctx.stroke();
+                }
+                ctx.restore();
             }
 
+            // Mid glow for mag < 2.5
+            if (s.mag < 2.5) {
+                var glowR = size * (s.mag < 0 ? 5 : 3.5 - s.mag * 0.3);
+                var gg = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowR);
+                gg.addColorStop(0, hexAlpha(color, alpha * 0.55));
+                gg.addColorStop(1, hexAlpha(color, 0));
+                ctx.fillStyle = gg;
+                ctx.beginPath(); ctx.arc(p.x, p.y, glowR, 0, Math.PI * 2); ctx.fill();
+            }
+
+            // Star disc – slightly blurred point
             ctx.globalAlpha = alpha;
             ctx.fillStyle = color;
             ctx.beginPath();
-            ctx.arc(p.x, p.y, size * 0.8, 0, Math.PI * 2);
+            ctx.arc(p.x, p.y, size * 0.75, 0, Math.PI * 2);
             ctx.fill();
+
+            // Hot core: white centre on bright stars
+            if (s.mag < 1.8) {
+                ctx.globalAlpha = alpha * 0.7;
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, size * 0.3, 0, Math.PI * 2);
+                ctx.fill();
+            }
             ctx.globalAlpha = 1;
         }
     }
@@ -704,33 +739,81 @@ var SkyRenderer = (function () {
 
     // ── Planets ───────────────────────────────────────────────
     function drawPlanets(planetData, sunAlt, time) {
-        var starVisibility = Math.max(0, Math.min(1, (-sunAlt) / 10));
+        var nightVis = Math.max(0, Math.min(1, (-sunAlt) / 10));
         planetData.forEach(function (pl) {
             if (pl.alt < -1) return;
-            if (pl.mag > 6.0) return;          // Uranus/Neptune: visible naked eye
+            if (pl.mag > 6.0) return;
             var p = project(Math.max(0, pl.alt), pl.az);
-            var alpha = Math.min(0.95, starVisibility + 0.1);
-            if (sunAlt > 5) alpha *= Math.max(0, 1 - (sunAlt - 5) / 20);
+            var alpha = Math.min(0.97, nightVis + 0.15);
+            if (sunAlt > 5) alpha *= Math.max(0, 1 - (sunAlt - 5) / 18);
             if (alpha < 0.05) return;
-            // Size depends on brightness
-            var size = 2.5 + Math.max(0, (3 - pl.mag)) * 0.8;
-            // Twinkle (planets don't twinkle much — lower scintillation)
-            var twinkle = 1 + 0.05 * Math.sin(time * 1.5 + pl.ra);
-            // Glow
-            var glowR = size * 3;
+
+            // Disc radius scales with brightness
+            var discR = Math.max(1.8, 3.5 + Math.max(0, (3 - pl.mag)) * 1.1);
+
+            // ── Saturn: rings ──
+            if (pl.name === 'Saturn') {
+                ctx.save();
+                ctx.globalAlpha = alpha * 0.65;
+                // Ring: tilted ellipse, semi-axes ~2.4× disc
+                var rx = discR * 2.5, ry = discR * 0.7;
+                var ringGrad = ctx.createLinearGradient(p.x - rx, p.y, p.x + rx, p.y);
+                ringGrad.addColorStop(0, 'rgba(200,185,140,0)');
+                ringGrad.addColorStop(0.2, 'rgba(210,195,150,0.55)');
+                ringGrad.addColorStop(0.45, 'rgba(230,210,165,0.7)');
+                ringGrad.addColorStop(0.5, 'rgba(175,160,110,0.35)'); // Cassini gap
+                ringGrad.addColorStop(0.55, 'rgba(230,210,165,0.7)');
+                ringGrad.addColorStop(0.8, 'rgba(210,195,150,0.55)');
+                ringGrad.addColorStop(1, 'rgba(200,185,140,0)');
+                ctx.strokeStyle = ringGrad;
+                ctx.lineWidth = ry * 1.5;
+                ctx.beginPath();
+                ctx.ellipse(p.x, p.y, rx, ry, 0, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            // Wide soft glow
+            var glowR = discR * 4.5;
             var gGrad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glowR);
-            gGrad.addColorStop(0, hexToRgba(pl.color, alpha * 0.4));
-            gGrad.addColorStop(1, hexToRgba(pl.color, 0));
+            gGrad.addColorStop(0, hexAlpha(pl.color, alpha * 0.45));
+            gGrad.addColorStop(0.5, hexAlpha(pl.color, alpha * 0.12));
+            gGrad.addColorStop(1, hexAlpha(pl.color, 0));
             ctx.fillStyle = gGrad;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, glowR, 0, Math.PI * 2);
-            ctx.fill();
-            // Disc
-            ctx.globalAlpha = alpha * twinkle;
-            ctx.fillStyle = pl.color;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.beginPath(); ctx.arc(p.x, p.y, glowR, 0, Math.PI * 2); ctx.fill();
+
+            // ── Jupiter: visible banding (two equatorial belts) ──
+            if (pl.name === 'Jupiter' && discR > 3) {
+                ctx.save();
+                ctx.beginPath(); ctx.arc(p.x, p.y, discR, 0, Math.PI * 2); ctx.clip();
+                // Base disc
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = pl.color;
+                ctx.fillRect(p.x - discR, p.y - discR, discR * 2, discR * 2);
+                // North equatorial belt
+                ctx.globalAlpha = alpha * 0.45;
+                ctx.fillStyle = 'rgba(160,110,70,1)';
+                ctx.fillRect(p.x - discR, p.y - discR * 0.55, discR * 2, discR * 0.28);
+                // South equatorial belt
+                ctx.fillRect(p.x - discR, p.y + discR * 0.18, discR * 2, discR * 0.28);
+                ctx.restore();
+            } else {
+                // Plain disc
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = pl.color;
+                ctx.beginPath(); ctx.arc(p.x, p.y, discR, 0, Math.PI * 2); ctx.fill();
+            }
+
+            // Bright limb highlight
+            ctx.globalAlpha = alpha * 0.4;
+            var hilite = ctx.createRadialGradient(
+                p.x - discR * 0.35, p.y - discR * 0.35, 0,
+                p.x, p.y, discR);
+            hilite.addColorStop(0, 'rgba(255,255,255,0.6)');
+            hilite.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = hilite;
+            ctx.beginPath(); ctx.arc(p.x, p.y, discR, 0, Math.PI * 2); ctx.fill();
+
             ctx.globalAlpha = 1;
         });
     }
@@ -740,6 +823,18 @@ var SkyRenderer = (function () {
             g = parseInt(hex.slice(3, 5), 16),
             b = parseInt(hex.slice(5, 7), 16);
         return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+    }
+
+    // Helper: hex color + alpha string (works with both '#rrggbb' and 'rgb(…)')
+    function hexAlpha(hex, a) {
+        if (hex.charAt(0) === '#') {
+            var r = parseInt(hex.slice(1, 3), 16),
+                g = parseInt(hex.slice(3, 5), 16),
+                b = parseInt(hex.slice(5, 7), 16);
+            return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+        }
+        // already rgb(...)
+        return hex.replace('rgb(', 'rgba(').replace(')', ',' + a + ')');
     }
 
     // ── Labels ───────────────────────────────────────────────
@@ -835,45 +930,197 @@ var WeatherFX = (function () {
     function resize(w, h) { W = w; H = h; }
 
     // ── Cloud layer ───────────────────────────────────────────
+    // Each cloud is a formation of bubble centres. At draw time a smooth
+    // quadratic-bezier hull is traced through the outermost points to produce
+    // an organic, non-oval silhouette.
+
     function initClouds(cover, seed) {
         if (Math.abs(cover - cloudsSeed) < 5 && clouds.length > 0) return;
         cloudsSeed = cover;
         clouds = [];
-        var count = Math.floor(cover * 0.3);
         var rng = makeSeed(seed || 7);
-        for (var i = 0; i < count; i++) {
+
+        // Fewer formations, much slower drift
+        var formationCount = Math.max(1, Math.floor(cover * 0.07));
+
+        for (var f = 0; f < formationCount; f++) {
+            var fcx = rng() * W * 1.3 - W * 0.15;
+            var fcy = rng() * H * 0.38 + H * 0.04;
+            var fScale = 0.7 + rng() * 1.2;
+            var isHigh = rng() > 0.72;
+            var isStorm = !isHigh && cover > 70 && rng() > 0.6;
+
+            var bubbles = [];
+            var bCount = isHigh ? (3 + Math.floor(rng() * 3))
+                : (5 + Math.floor(rng() * 7));
+
+            for (var b = 0; b < bCount; b++) {
+                var bx2, by2, br2;
+                if (isHigh) {
+                    bx2 = fcx + (rng() - 0.5) * 420 * fScale;
+                    by2 = fcy + (rng() - 0.5) * 22;
+                    br2 = 28 + rng() * 55;
+                } else {
+                    var ang = rng() * Math.PI * 2;
+                    var dist = rng() * 120 * fScale;
+                    bx2 = fcx + Math.cos(ang) * dist;
+                    by2 = fcy + Math.sin(ang) * dist * 0.42 - rng() * 40 * fScale;
+                    br2 = 38 + rng() * 70 * fScale;
+                    if (isStorm) br2 *= 1.5;
+                }
+                bubbles.push({ x: bx2, y: by2, r: br2 });
+            }
+
             clouds.push({
-                x: rng() * W,
-                y: rng() * H * 0.6 + H * 0.05,
-                w: 120 + rng() * 250,
-                h: 50 + rng() * 100,
-                alpha: 0.15 + rng() * 0.25 * (cover / 100),
-                speed: 0.04 + rng() * 0.08
+                cx: fcx, cy: fcy,
+                bubbles: bubbles,
+                isHigh: isHigh,
+                isStorm: isStorm,
+                alpha: isHigh ? 0.10 + rng() * 0.12
+                    : isStorm ? 0.55 + rng() * 0.20
+                        : 0.28 + rng() * 0.30,
+                speed: isHigh ? 0.008 + rng() * 0.006
+                    : 0.003 + rng() * 0.007,
             });
         }
     }
 
     function updateClouds(dt) {
-        clouds.forEach(function (c) {
-            c.x += c.speed * dt;
-            if (c.x - c.w / 2 > W) c.x = -c.w / 2;
+        clouds.forEach(function (cloud) {
+            var dx = cloud.speed * dt;
+            cloud.cx += dx;
+            cloud.bubbles.forEach(function (b) { b.x += dx; });
+            // Wrap: when rightmost edge leaves screen, jump to left
+            var maxX = -Infinity;
+            cloud.bubbles.forEach(function (b) { if (b.x + b.r > maxX) maxX = b.x + b.r; });
+            if (maxX < -60) {
+                var shift = W + 120;
+                cloud.cx += shift;
+                cloud.bubbles.forEach(function (b) { b.x += shift; });
+            }
         });
     }
 
+    // Trace a smooth closed curve through the outermost envelope of a bubble set.
+    function buildCloudPath(bubbles) {
+        if (!bubbles.length) return;
+        // Sample many points around each bubble perimeter
+        var pts = [];
+        var N = 12;
+        bubbles.forEach(function (b) {
+            for (var k = 0; k < N; k++) {
+                var a = (k / N) * Math.PI * 2;
+                pts.push({
+                    x: b.x + Math.cos(a) * b.r,
+                    y: b.y + Math.sin(a) * b.r
+                });
+            }
+        });
+        // Find centroid
+        var cx2 = 0, cy2 = 0;
+        pts.forEach(function (p) { cx2 += p.x; cy2 += p.y; });
+        cx2 /= pts.length; cy2 /= pts.length;
+        // Keep outermost point per angular sector
+        var sectors = 32;
+        var outer = [];
+        for (var s = 0; s < sectors; s++) {
+            var a0 = (s / sectors) * Math.PI * 2;
+            var a1 = ((s + 1) / sectors) * Math.PI * 2;
+            var best = null, bestD = -1;
+            pts.forEach(function (p) {
+                var a = Math.atan2(p.y - cy2, p.x - cx2);
+                if (a < 0) a += Math.PI * 2;
+                if (a >= a0 && a < a1) {
+                    var d = (p.x - cx2) * (p.x - cx2) + (p.y - cy2) * (p.y - cy2);
+                    if (d > bestD) { bestD = d; best = p; }
+                }
+            });
+            if (best) outer.push(best);
+        }
+        if (outer.length < 3) return;
+        // Smooth closed curve through midpoints (Chaikin-style)
+        var n = outer.length;
+        ctx.moveTo((outer[0].x + outer[n - 1].x) / 2,
+            (outer[0].y + outer[n - 1].y) / 2);
+        for (var i = 0; i < n; i++) {
+            var cur = outer[i];
+            var nxt = outer[(i + 1) % n];
+            ctx.quadraticCurveTo(cur.x, cur.y,
+                (cur.x + nxt.x) / 2, (cur.y + nxt.y) / 2);
+        }
+        ctx.closePath();
+    }
+
     function drawClouds(cover, sunAlt) {
-        if (cover < 5) return;
-        var lightness = sunAlt > 0 ? 1 : Math.max(0.1, 1 + sunAlt * 0.04);
-        var baseAlpha = (cover / 100) * 0.7;
-        clouds.forEach(function (c) {
-            var grad = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, c.w * 0.6);
-            var l = Math.floor(200 * lightness);
-            grad.addColorStop(0, 'rgba(' + l + ',' + l + ',' + (l + 15) + ',' + (c.alpha * baseAlpha) + ')');
-            grad.addColorStop(0.6, 'rgba(' + l + ',' + l + ',' + (l + 10) + ',' + (c.alpha * baseAlpha * 0.5) + ')');
-            grad.addColorStop(1, 'rgba(0,0,0,0)');
-            ctx.fillStyle = grad;
-            ctx.beginPath();
-            ctx.ellipse(c.x, c.y, c.w * 0.6, c.h * 0.45, 0, 0, Math.PI * 2);
-            ctx.fill();
+        if (cover < 4) return;
+
+        var dayT = Math.max(0, Math.min(1, (sunAlt + 2) / 12));
+        var goldenT = (sunAlt > -4 && sunAlt < 9)
+            ? Math.max(0, 1 - Math.abs(sunAlt - 3) / 6) : 0;
+        var lBase = Math.floor(dayT * 215 + 18);
+        var cr = Math.min(255, Math.max(18, lBase + Math.floor(goldenT * 38)));
+        var cg = Math.min(255, Math.max(20, lBase + Math.floor(goldenT * 14)));
+        var cb = Math.min(255, Math.max(26, lBase - Math.floor(goldenT * 12)
+            + Math.floor((1 - dayT) * 18)));
+        var coverFrac = cover / 100;
+
+        clouds.forEach(function (cloud) {
+            var a = cloud.alpha * coverFrac;
+            if (a < 0.015) return;
+            var bubbles = cloud.bubbles;
+
+            // Compute bounding box for gradient
+            var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            bubbles.forEach(function (b) {
+                if (b.x - b.r < minX) minX = b.x - b.r;
+                if (b.x + b.r > maxX) maxX = b.x + b.r;
+                if (b.y - b.r < minY) minY = b.y - b.r;
+                if (b.y + b.r > maxY) maxY = b.y + b.r;
+            });
+
+            ctx.save();
+
+            if (cloud.isHigh) {
+                // Cirrus: individual soft horizontal wisps, no outline
+                bubbles.forEach(function (b) {
+                    var wg = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
+                    wg.addColorStop(0, 'rgba(' + cr + ',' + cg + ',' + cb + ',' + (a * 0.6) + ')');
+                    wg.addColorStop(0.5, 'rgba(' + cr + ',' + cg + ',' + cb + ',' + (a * 0.25) + ')');
+                    wg.addColorStop(1, 'rgba(' + cr + ',' + cg + ',' + cb + ',0)');
+                    ctx.fillStyle = wg;
+                    ctx.beginPath();
+                    ctx.ellipse(b.x, b.y, b.r, b.r * 0.26, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            } else {
+                // Cumulus/storm: organic hull filled with vertical gradient
+                var dr = cloud.isStorm ? Math.max(10, cr - 65) : Math.max(18, cr - 25);
+                var dg2 = cloud.isStorm ? Math.max(12, cg - 65) : Math.max(20, cg - 25);
+                var db = cloud.isStorm ? Math.max(18, cb - 50) : Math.max(22, cb - 16);
+
+                var linGrad = ctx.createLinearGradient(0, minY, 0, maxY);
+                linGrad.addColorStop(0, 'rgba(' + cr + ',' + cg + ',' + cb + ',' + (a) + ')');
+                linGrad.addColorStop(0.42, 'rgba(' + cr + ',' + cg + ',' + cb + ',' + (a * 0.88) + ')');
+                linGrad.addColorStop(0.75, 'rgba(' + dr + ',' + dg2 + ',' + db + ',' + (a * 0.62) + ')');
+                linGrad.addColorStop(1, 'rgba(' + dr + ',' + dg2 + ',' + db + ',' + (a * 0.28) + ')');
+
+                // Fill organic shape
+                ctx.beginPath();
+                buildCloudPath(bubbles);
+                ctx.fillStyle = linGrad;
+                ctx.fill();
+
+                // Soft outer glow for depth
+                ctx.beginPath();
+                buildCloudPath(bubbles);
+                ctx.shadowColor = 'rgba(' + cr + ',' + cg + ',' + cb + ',0.20)';
+                ctx.shadowBlur = 22;
+                ctx.strokeStyle = 'rgba(' + cr + ',' + cg + ',' + cb + ',' + (a * 0.10) + ')';
+                ctx.lineWidth = 4;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+            }
+            ctx.restore();
         });
     }
 
